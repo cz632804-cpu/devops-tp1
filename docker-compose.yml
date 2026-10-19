@@ -10,19 +10,19 @@ services:
     image: tp01-database
     restart: unless-stopped
 
+    # Read database configuration from the .env file.
     environment:
-      POSTGRES_DB: db
-      POSTGRES_USER: usr
-      # Demo credentials for this local TP only.
-      POSTGRES_PASSWORD: pwd
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
 
-    # Persistent database storage.
-    # This volume is separate from the original TP01 database.
+    # Keep PostgreSQL data after container recreation.
     volumes:
       - postgres-data:/var/lib/postgresql/data
 
+    # Check that PostgreSQL is ready to accept connections.
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U usr -d db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,17 +37,19 @@ services:
     image: tp01-backend
     restart: unless-stopped
 
+    # Use the same database credentials as PostgreSQL.
+    # "database" is resolved by Docker's internal DNS.
     environment:
-      # Docker DNS resolves "database" to the PostgreSQL service.
-      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/db
-      SPRING_DATASOURCE_USERNAME: usr
-      SPRING_DATASOURCE_PASSWORD: pwd
+      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
 
+    # Wait until PostgreSQL is healthy before starting the backend.
     depends_on:
       database:
         condition: service_healthy
 
-    # Only Apache is exposed to the host.
+    # Backend is accessible to other containers, not published to the host.
     expose:
       - "8080"
 
@@ -61,9 +63,8 @@ services:
     image: tp01-http-server
     restart: unless-stopped
 
+    # Host port 8081 -> Apache container port 80.
     ports:
-      # Host port 8081 -> Apache container port 80.
-      # Avoids conflict with the existing standalone API on 8080.
       - "8081:80"
 
     depends_on:
@@ -72,11 +73,11 @@ services:
     networks:
       - tp01-network
 
-# Compose manages an isolated network for the three services.
+# Internal network shared by all three services.
 networks:
   tp01-network:
     driver: bridge
 
-# Named volume retains PostgreSQL data after container recreation.
+# Persistent PostgreSQL storage.
 volumes:
   postgres-data:
