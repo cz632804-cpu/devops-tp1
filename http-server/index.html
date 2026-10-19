@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DevOps TP01 - Docker</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            color: #222;
+            max-width: 800px;
+            margin: 80px auto;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            color: #2563eb;
+        }
+
+        a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+
+        li {
+            margin: 12px 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>DevOps TP01 - Docker</h1>
+
+        <p>
+            Three-tier application using Apache,
+            Spring Boot and PostgreSQL.
+        </p>
+
+        <h2>Application services</h2>
+
+        <ul>
+            <li>Apache HTTP Server - Reverse Proxy</li>
+            <li>Spring Boot 3.4.5 - Java 21</li>
+            <li>PostgreSQL 17.2 - Database</li>
+        </ul>
+
+        <h2>Available API endpoints</h2>
+
+        <ul>
+            <li><a href="/">Greeting API</a></li>
+            <li><a href="/departments">Departments</a></li>
+            <li><a href="/departments/IRC/students">IRC Students</a></li>
+            <li><a href="/students/1">Student Details</a></li>
+        </ul>
+    </div>
+</body>
+</html>
