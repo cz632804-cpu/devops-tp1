@@ -1,0 +1,40 @@
+
+# Continuous Integration for the original TP01 application.
+name: CI DevOps
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  test-backend:
+    name: Build and test Spring Boot
+    runs-on: ubuntu-24.04
+
+    steps:
+      # Download the repository code.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Install the Java version used by TP01.
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: backend/simple-api/pom.xml
+
+      # Compile the application and execute the available tests.
+      - name: Build and test backend
+        working-directory: backend/simple-api
+        run: mvn -B clean verify
