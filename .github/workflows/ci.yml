@@ -1,5 +1,5 @@
 
-# Continuous Integration for the original TP01 application.
+# CI for TP01: test Java code and validate quality before Docker publishing.
 name: CI DevOps
 
 on:
@@ -21,11 +21,13 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # Download the repository code.
+      # Fetch the complete history required by SonarQube analysis.
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Install the Java version used by TP01.
+      # Install Java 21 and reuse Maven dependencies between CI runs.
       - name: Set up Java 21
         uses: actions/setup-java@v4
         with:
@@ -34,7 +36,23 @@ jobs:
           cache: maven
           cache-dependency-path: backend/simple-api/pom.xml
 
-      # Compile the application and execute the available tests.
+      # Run unit and PostgreSQL Testcontainers integration tests.
       - name: Build and test backend
         working-directory: backend/simple-api
         run: mvn -B clean verify
+
+      # Run SonarQube only for a push on main.
+      # Waiting for the Quality Gate prevents CD from publishing
+      # when code quality checks do not pass.
+      - name: SonarQube Cloud analysis and Quality Gate
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        working-directory: backend/simple-api
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+            -Dsonar.projectKey=cz632804-cpu_devops-tp1 \
+            -Dsonar.organization=cz632804-cpu \
+            -Dsonar.host.url=https://sonarcloud.io \
+            -Dsonar.token="$SONAR_TOKEN" \
+            -Dsonar.qualitygate.wait=true
