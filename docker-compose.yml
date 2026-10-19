@@ -1,0 +1,82 @@
+# TP01 - Three-tier Docker application
+# Apache HTTP Server -> Spring Boot -> PostgreSQL
+
+services:
+
+  # PostgreSQL database
+  database:
+    build:
+      context: ./database
+    image: tp01-database
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: db
+      POSTGRES_USER: usr
+      # Demo credentials for this local TP only.
+      POSTGRES_PASSWORD: pwd
+
+    # Persistent database storage.
+    # This volume is separate from the original TP01 database.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U usr -d db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - tp01-network
+
+  # Spring Boot REST API
+  backend:
+    build:
+      context: ./backend/simple-api
+    image: tp01-backend
+    restart: unless-stopped
+
+    environment:
+      # Docker DNS resolves "database" to the PostgreSQL service.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/db
+      SPRING_DATASOURCE_USERNAME: usr
+      SPRING_DATASOURCE_PASSWORD: pwd
+
+    depends_on:
+      database:
+        condition: service_healthy
+
+    # Only Apache is exposed to the host.
+    expose:
+      - "8080"
+
+    networks:
+      - tp01-network
+
+  # Apache HTTP reverse proxy
+  http-server:
+    build:
+      context: ./http-server
+    image: tp01-http-server
+    restart: unless-stopped
+
+    ports:
+      # Host port 8081 -> Apache container port 80.
+      # Avoids conflict with the existing standalone API on 8080.
+      - "8081:80"
+
+    depends_on:
+      - backend
+
+    networks:
+      - tp01-network
+
+# Compose manages an isolated network for the three services.
+networks:
+  tp01-network:
+    driver: bridge
+
+# Named volume retains PostgreSQL data after container recreation.
+volumes:
+  postgres-data:
