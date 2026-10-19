@@ -1,5 +1,4 @@
-
-# DevOps TP01 - Docker
+# DevOps TP01 + TP02 — Docker and CI/CD
 
 ## Project overview
 
@@ -9,7 +8,9 @@ This project implements a three-tier application using Docker:
 - Spring Boot 3.4.5 with Java 21 as the backend
 - PostgreSQL 17.2 as the database
 
-The application is deployed using Docker Compose and the images are published to Docker Hub.
+TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**.
+
+Repository: https://github.com/cz632804-cpu/devops-tp1
 
 ## 1. Database
 
@@ -47,7 +48,7 @@ COPY 01-CreateScheme.sql /docker-entrypoint-initdb.d/
 COPY 02-InsertData.sql /docker-entrypoint-initdb.d/
 ```
 
-Build:
+Build (standalone TP01 database exercise):
 
 ```bash
 docker build -t my-database ./database
@@ -273,6 +274,19 @@ Warning: `docker compose down -v` also removes the Compose-managed named volumes
 
 The file `docker-compose.yml` defines three services.
 
+**Local environment configuration**
+
+Copy `.env.example` to `.env` before starting the application, and set `POSTGRES_DB`, `POSTGRES_USER` and `POSTGRES_PASSWORD`. Docker Compose interpolates these values into the PostgreSQL and Spring Boot environment configuration. The `.env` file must be ignored by Git and must not be committed. `.env.example` is a shareable template, not a production secret store.
+
+```bash
+cp .env.example .env
+# Edit .env to set values appropriate for your local environment.
+docker compose config --quiet
+docker compose up -d --build
+```
+
+The original demo values (`db`, `usr`, `pwd`) are intended only for a local teaching environment. Environment variables can still be exposed through container inspection, so production deployments should use managed secrets.
+
 **database**
 
 - Builds a PostgreSQL 17.2 image.
@@ -417,9 +431,141 @@ docker compose exec database \
 
 The setup provides container networking, persistent storage, health checks, Spring Boot API endpoints and an Apache reverse proxy.
 
-## 7. Conclusion
+## 7. TP02 — GitHub Actions CI/CD
 
-This TP demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration and Docker Hub publication.
+The GitHub Actions workflows were added to the **original TP01 repository**, rather than relying on the separate fork used for the introductory Git/GitHub TD.
+
+### CI workflow — `.github/workflows/ci.yml`
+
+The workflow is named **CI DevOps** and is triggered by pushes and pull requests targeting `main` and `develop`.
+
+Its `test-backend` job runs on `ubuntu-24.04` and performs the following steps:
+
+1. Check out the repository with complete Git history (`fetch-depth: 0`) for SonarQube analysis.
+2. Install Temurin Java 21 and cache Maven dependencies using `backend/simple-api/pom.xml`.
+3. Run `mvn -B clean verify` from `backend/simple-api`, executing the available Java tests, including the PostgreSQL Testcontainers integration test.
+4. For **pushes to `main` only**, run SonarQube Cloud analysis and wait for the Quality Gate result (`sonar.qualitygate.wait=true`).
+
+The SonarQube analysis is limited to pushes on `main` because the previous free-plan setup did not permit analysis of non-main branches. `develop` still receives Maven build and test checks; pull requests run those checks without the SonarQube Maven analysis step.
+
+### Testcontainers integration test
+
+The Spring Boot backend has test dependencies for `org.testcontainers:junit-jupiter` and `org.testcontainers:postgresql`.
+
+The integration test is in:
+
+`backend/simple-api/src/test/java/fr/takima/training/simpleapi/PostgresIntegrationTests.java`
+
+The test starts an isolated `postgres:17.2-alpine` container, connects the Spring application to that container using `@DynamicPropertySource`, and executes `SELECT 1` through `JdbcTemplate` to verify actual database connectivity. This database is independent of the PostgreSQL service started by the TP01 Docker Compose file.
+
+```bash
+cd backend/simple-api
+mvn clean verify
+```
+
+The successful local run reported one Testcontainers integration test with no failures or errors. The CI workflow also completed successfully after that test was committed. **The integration test checks database connectivity; it does not yet exhaustively test every student/department API endpoint.**
+
+Testcontainers requires an available Docker Engine. For compatibility with the Docker Desktop environment used during this TP, the test resources include `docker-java.properties` with `api.version=1.44`. This is a compatibility workaround, not a requirement for all environments.
+
+### SonarQube Cloud analysis and Quality Gate
+
+SonarQube Cloud project:
+
+https://sonarcloud.io/dashboard?id=cz632804-cpu_devops-tp1&branch=main
+
+Configuration:
+
+- Project key: `cz632804-cpu_devops-tp1`
+- Organization key: `cz632804-cpu`
+- Maven module: `backend/simple-api`
+- Host: `https://sonarcloud.io`
+- Analysis method: GitHub Actions (SonarQube's automatic analysis is disabled)
+
+The CI invokes the SonarQube Maven scanner after `mvn clean verify` and waits for the Quality Gate. A non-passing Quality Gate causes the CI job to fail and thereby prevents the CD publishing job from running.
+
+The scanner authenticates using the repository secret `SONAR_TOKEN`. Neither the token nor a production password is stored in the workflow YAML or committed to the repository.
+
+### CD workflow — `.github/workflows/cd.yml`
+
+The workflow is named **CD DevOps**. It is triggered by a `workflow_run` event when **CI DevOps** completes for the `main` branch. The publishing job has additional conditions requiring a successful CI run that was initiated by a push to `main`.
+
+CD checks out the **validated commit SHA** from the successful CI, logs into Docker Hub using repository secrets, and builds/pushes three images with the `latest` tag:
+
+| Docker image | Docker build context |
+| --- | --- |
+| `nifdgg/tp01-backend:latest` | `./backend/simple-api` |
+| `nifdgg/tp01-database:latest` | `./database` |
+| `nifdgg/tp01-http-server:latest` | `./http-server` |
+
+Publishing uses `docker/build-push-action@v6`. The images can be pulled on a different machine without rebuilding their Dockerfiles.
+
+This repository's GitHub Actions secrets are:
+
+| Secret | Purpose |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Docker Hub account used to publish images |
+| `DOCKERHUB_TOKEN` | Docker Hub authentication token with push access |
+| `SONAR_TOKEN` | SonarQube Cloud analysis authentication token |
+
+Set these in **GitHub repository → Settings → Secrets and variables → Actions**. Secrets belong to this repository and are not automatically copied from a different fork.
+
+### Branch behavior and validation
+
+| Event | Maven tests | SonarQube Maven analysis | Docker image publishing |
+| --- | --- | --- | --- |
+| Push to `main` | Yes | Yes; waits for Quality Gate | Only if CI succeeds |
+| Push to `develop` | Yes | No | No |
+| Pull request to `main` or `develop` | Yes | No | No |
+
+Observed successful GitHub Actions executions for this repository:
+
+- Initial CI/CD integration: CI #1 and CD #1 — success.
+- PostgreSQL Testcontainers integration: CI #2 and CD #2 — success.
+- SonarQube Cloud and Quality Gate integration: CI #3 and CD #3 — success (CI commit `aef5fad`).
+
+The **`develop` branch behavior is defined in the workflows but has not yet been separately verified in this repository**. This is distinct from the earlier fork, where `develop` CI was tested.
+
+Actions history: https://github.com/cz632804-cpu/devops-tp1/actions
+
+## 8. TP02 — Questions and answers
+
+### 2-1. What are Testcontainers?
+
+Testcontainers is a testing library that starts temporary Docker containers during automated tests. In this project, a PostgreSQL container provides a real database for the integration test, reducing dependence on manually maintained test databases and improving reproducibility in local development and CI.
+
+### 2-2. Why do we need secure variables?
+
+Credentials such as Docker Hub access tokens and SonarQube tokens must not be stored in source code or workflow files. GitHub Actions secrets allow workflows to use these values without committing them to the repository. Secret access should be limited, and logs must not intentionally print their values.
+
+### 2-3. Why put `needs: build-and-test-backend` on a CD job?
+
+In a **single GitHub Actions workflow**, `needs` creates a dependency between jobs, so a publishing job runs only after the required build-and-test job has succeeded. This prevents an untested build from being published.
+
+**In our final split-workflow implementation**, CI and CD live in two different YAML files, so we do **not** use `needs` to connect them. Instead, `workflow_run` triggers the CD workflow on CI completion, and the CD job checks that the prior CI conclusion was `success` and the event was a push to `main`.
+
+### 2-4. Why push Docker images to a registry?
+
+A registry such as Docker Hub distributes versioned images to other developers and deployment servers. Pushing images from CI/CD enables a build that passed tests and the quality check to be retrieved and deployed elsewhere without repeating the local build steps.
+
+## 9. How to demonstrate both TPs
+
+**TP01 — Docker:**
+
+```bash
+# From the repository root, after preparing .env:
+docker compose up -d --build
+docker compose ps
+```
+
+Open `http://localhost:8081/index.html` and use its four links: Greeting API (`/`), Departments (`/departments`), IRC Students (`/departments/IRC/students`), and Student Details (`/students/1`). Show that Apache proxies requests to Spring Boot and that PostgreSQL holds the department/student data.
+
+**TP02 — Automation:**
+
+Open the GitHub Actions page and show the successful CI and CD runs, including Maven/Testcontainers and SonarQube in the CI job and three Docker build-and-push steps in CD. Then show the SonarQube Cloud project and three `latest` image tags on Docker Hub.
+
+## 10. Conclusion
+
+TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the same application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery.
 
 The application can be built and started with:
 
