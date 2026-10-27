@@ -1,14 +1,14 @@
-# DevOps TP01 + TP02 — Docker and CI/CD
+# DevOps TP01 + TP02 + TP03 — Docker, CI/CD and Ansible
 
 ## Project overview
 
-This project implements a three-tier application using Docker:
+This project implements a three-tier application using Docker, with a Vue.js frontend:
 
-- Apache HTTP Server 2.4 as a reverse proxy
+- Vue.js frontend (from the teacher's [`devops-front`](https://github.com/takima-training/devops-front) repository), served by Apache HTTP Server 2.4
 - Spring Boot 3.4.5 with Java 21 as the backend
 - PostgreSQL 17.2 as the database
 
-TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**.
+TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**. TP03 introduces Ansible deployment to a remote server. The teacher-provided Vue.js frontend has also been integrated and tested locally; deployment of this new frontend to the remote server is not yet verified.
 
 Repository: https://github.com/cz632804-cpu/devops-tp1
 
@@ -172,13 +172,17 @@ Expected response:
 {"id":1,"content":"Hello, World!"}
 ```
 
-The database-backed API provides:
+The database-backed API provides the following Spring Boot routes (the reverse proxy exposes them with the `/api` prefix):
 
 ```http
 GET /departments
-GET /departments/IRC/students
-GET /students/1
+GET /departments/{name}
+GET /departments/{name}/students
+GET /students/{id}
+POST /students
 ```
+
+The `GET /departments/{name}` and `POST /students` endpoints were added to support the teacher's Vue frontend. The local department and student listing was verified in the browser; the Add Student action should be checked separately after rebuilding the backend.
 
 For example, the IRC endpoint returns student information with the associated department.
 
@@ -196,17 +200,20 @@ In this project, Apache listens on port 80 inside its container and forwards API
 
 The Docker Compose configuration publishes Apache on host port 8081.
 
-The Apache landing page is available at:
+The Vue.js frontend is available at:
 
 ```text
-http://localhost:8081/index.html
+http://localhost:8081/
 ```
 
-The API is available through the proxy at:
+The API is accessible through Apache under `/api/`, for example:
 
 ```text
-http://localhost:8081/departments/IRC/students
+http://localhost:8081/api/departments
+http://localhost:8081/api/departments/IRC/students
 ```
+
+Apache removes the `/api/` prefix when forwarding to `http://backend:8080/`. A fallback rewrite to `/index.html` allows Vue Router routes such as `/departments/IRC` to work on refresh.
 
 ## 4. Docker Compose
 
@@ -305,9 +312,9 @@ The original demo values (`db`, `usr`, `pwd`) are intended only for a local teac
 
 **http-server**
 
-- Builds an Apache HTTP Server image.
-- Serves a simple HTML landing page.
-- Forwards API requests to `backend:8080`.
+- Builds the teacher-provided Vue.js frontend in a Node.js build stage.
+- Copies the compiled `dist/` files into an Apache HTTP Server runtime image.
+- Serves the Vue.js application and forwards `/api/` requests to `backend:8080`.
 - Maps host port 8081 to container port 80.
 - Depends on the backend service.
 
@@ -322,13 +329,13 @@ A named PostgreSQL volume preserves the database across container recreation.
 Architecture:
 
 ```text
-Client
+Browser (Vue.js frontend)
   |
   | localhost:8081
   v
-Apache HTTP Server
+Apache HTTP Server (Vue static files + /api reverse proxy)
   |
-  | backend:8080
+  | /api/* -> backend:8080/*
   v
 Spring Boot API
   |
@@ -404,23 +411,22 @@ Verify the services:
 docker compose ps
 ```
 
-Test the greeting API:
+Test the backend through Apache:
 
 ```bash
-curl http://localhost:8081/
+curl http://localhost:8081/api/departments
+curl http://localhost:8081/api/departments/IRC
+curl http://localhost:8081/api/departments/IRC/students
 ```
 
-Test the database-backed API:
-
-```bash
-curl http://localhost:8081/departments/IRC/students
-```
-
-Test the Apache landing page:
+Open the Vue.js frontend and select a department:
 
 ```text
-http://localhost:8081/index.html
+http://localhost:8081/
+http://localhost:8081/departments/IRC
 ```
+
+The frontend's department list and student list were verified locally. Also verify student creation through the **Add** button after rebuilding the Spring Boot image; it is not claimed as verified here.
 
 Verify PostgreSQL:
 
@@ -495,7 +501,7 @@ CD checks out the **validated commit SHA** from the successful CI, logs into Doc
 | --- | --- |
 | `nifdgg/tp01-backend:latest` | `./backend/simple-api` |
 | `nifdgg/tp01-database:latest` | `./database` |
-| `nifdgg/tp01-http-server:latest` | `./http-server` |
+| `nifdgg/tp01-http-server:latest` | repository root (`.`), Dockerfile `./http-server/Dockerfile` |
 
 Publishing uses `docker/build-push-action@v6`. The images can be pulled on a different machine without rebuilding their Dockerfiles.
 
@@ -547,7 +553,33 @@ In a **single GitHub Actions workflow**, `needs` creates a dependency between jo
 
 A registry such as Docker Hub distributes versioned images to other developers and deployment servers. Pushing images from CI/CD enables a build that passed tests and the quality check to be retrieved and deployed elsewhere without repeating the local build steps.
 
-## 9. How to demonstrate both TPs
+## 9. TP03 — Ansible deployment and Vue.js frontend
+
+### Ansible deployment
+
+The `ansible/` directory contains the deployment playbook and the Ansible roles used to provision and deploy the Dockerized application to the school server. The existing TP03 deployment was configured before the Vue.js frontend was integrated. The frontend changes are currently on the `feature/teacher-frontend` branch; the remote deployment of these changes has not yet been verified.
+
+The deployment workflow remains: CI validates the backend on `main`, CD builds and pushes Docker images to Docker Hub, and Ansible deploys the images to the target host.
+
+### Teacher-provided Vue.js frontend
+
+Frontend source: https://github.com/takima-training/devops-front
+
+Files relevant to the frontend integration:
+
+- `devops-front/src/components/DepartmentList.vue` — fetches `/api/departments`.
+- `devops-front/src/components/Department.vue` — fetches department details and students and submits new students using `/api` routes.
+- `http-server/Dockerfile` — builds Vue.js using Node.js and serves the generated files with Apache.
+- `http-server/proxy.conf` — routes `/api/` to Spring Boot and falls back to the Vue entry page for client-side navigation.
+- `docker-compose.yml` — builds Apache from the repository root so Docker can access `devops-front/`.
+- `.github/workflows/cd.yml` — uses the repository-root build context for the Apache image.
+- `backend/simple-api/src/main/java/fr/takima/training/simpleapi/controller/StudentController.java` — provides student and department API endpoints.
+
+The Vue application no longer calls `localhost:8080` directly. Instead, it makes same-origin requests to `/api/`, which Apache proxies internally to Spring Boot. This avoids exposing the backend port to the browser and avoids cross-origin requests for this frontend.
+
+**Local verification:** the Vue homepage, department navigation, and student listing have been displayed successfully at `http://localhost:8081/`. Student creation and the new frontend's remote deployment must be validated separately.
+
+## 10. How to demonstrate TP01, TP02 and TP03
 
 **TP01 — Docker:**
 
@@ -557,15 +589,19 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Open `http://localhost:8081/index.html` and use its four links: Greeting API (`/`), Departments (`/departments`), IRC Students (`/departments/IRC/students`), and Student Details (`/students/1`). Show that Apache proxies requests to Spring Boot and that PostgreSQL holds the department/student data.
+Open `http://localhost:8081/`, select a department such as IRC, and display its students. Show that the frontend uses `/api/departments` and `/api/departments/IRC/students`, Apache proxies these requests to Spring Boot, and PostgreSQL stores the data. Demonstrate the Add button only after validating student creation.
 
 **TP02 — Automation:**
 
-Open the GitHub Actions page and show the successful CI and CD runs, including Maven/Testcontainers and SonarQube in the CI job and three Docker build-and-push steps in CD. Then show the SonarQube Cloud project and three `latest` image tags on Docker Hub.
+Open the GitHub Actions page and show successful CI and CD runs for the previously deployed version, including Maven/Testcontainers and SonarQube in CI and Docker build-and-push steps in CD. The new frontend build must be validated on `main` before claiming that this version was deployed.
 
-## 10. Conclusion
+**TP03 — Deployment and frontend integration:**
 
-TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the same application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery.
+Show `ansible/playbook.yml` and the Ansible roles, then show `http-server/Dockerfile`, `http-server/proxy.conf`, and the modified Vue `fetch` calls. Demonstrate the locally running Vue frontend. Show the remote site only after the new Docker images have been built, pushed, and deployed successfully.
+
+## 11. Conclusion
+
+TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery. TP03 adds Ansible-based deployment. The teacher-provided Vue frontend is integrated and works locally; remote deployment of this updated frontend remains to be verified.
 
 The application can be built and started with:
 
