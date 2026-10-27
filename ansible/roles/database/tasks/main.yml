@@ -1,0 +1,30 @@
+
+---
+# Store PostgreSQL data outside the container to survive recreation.
+- name: Create PostgreSQL persistent volume
+  community.docker.docker_volume:
+    name: postgres-data
+    state: present
+
+# Deploy the database image built during TP01.
+- name: Deploy PostgreSQL container
+  community.docker.docker_container:
+    name: database
+    image: nifdgg/tp01-database:latest
+    pull: true
+    state: started
+    restart_policy: unless-stopped
+
+    # Allow containers to communicate using Docker DNS names.
+    networks:
+      - name: app-network
+
+    # Persist database files when the container is recreated.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+    # These values must match the backend's database configuration.
+    env:
+      POSTGRES_DB: db
+      POSTGRES_USER: usr
+      POSTGRES_PASSWORD: "{{ db_password }}"

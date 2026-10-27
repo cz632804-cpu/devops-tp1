@@ -1,0 +1,59 @@
+# Install packages needed to configure Docker's official repository.
+- name: Install Docker prerequisites
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - python3
+      - python3-pip
+      - python3-venv
+      - python3-debian
+    state: present
+    update_cache: true
+
+# Use Docker's signed Debian repository rather than an unverified package source.
+- name: Add official Docker repository
+  ansible.builtin.deb822_repository:
+    name: docker
+    types:
+      - deb
+    uris: https://download.docker.com/linux/debian
+    suites:
+      - "{{ ansible_facts['distribution_release'] }}"
+    components:
+      - stable
+    signed_by: https://download.docker.com/linux/debian/gpg
+    state: present
+    enabled: true
+
+# Install the Docker Engine, CLI and Compose plugin.
+- name: Install Docker packages
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+# Keep Docker's Python SDK isolated from Debian system packages.
+- name: Create Python virtual environment for Docker SDK
+  ansible.builtin.command:
+    cmd: python3 -m venv /opt/docker_venv
+    creates: /opt/docker_venv/bin/python
+
+- name: Install Docker Python SDK
+  ansible.builtin.pip:
+    name:
+      - docker
+      - requests==2.31.0
+    executable: /opt/docker_venv/bin/pip
+
+# Ensure Docker is started and will start after server reboot.
+- name: Ensure Docker service is running
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true

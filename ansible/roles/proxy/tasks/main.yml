@@ -1,0 +1,19 @@
+
+---
+# Deploy the Apache reverse proxy image published during TP02.
+- name: Deploy Apache reverse proxy
+  community.docker.docker_container:
+    name: http-server
+    image: nifdgg/tp01-http-server:latest
+    pull: true
+    state: started
+    restart_policy: unless-stopped
+
+    # Use Docker DNS to reach the backend by its container name.
+    networks:
+      - name: app-network
+
+    # Expose only the reverse proxy to the outside world.
+    # PostgreSQL and Spring Boot remain on the internal Docker network.
+    published_ports:
+      - "80:80"

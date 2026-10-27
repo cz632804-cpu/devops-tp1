@@ -1,0 +1,26 @@
+
+---
+# Install and configure Docker using Debian's system Python.
+- name: Configure Docker server
+  hosts: all
+  gather_facts: true
+  become: true
+
+  roles:
+    - docker
+
+# Manage Docker resources using the isolated Python Docker SDK.
+- name: Configure application network
+  hosts: all
+  gather_facts: false
+  become: true
+
+  vars:
+    ansible_python_interpreter: /opt/docker_venv/bin/python
+    db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
+
+  roles:
+    - network
+    - database
+    - backend
+    - proxy

@@ -1,0 +1,13 @@
+all:
+  vars:
+    # SSH user on the school's remote server.
+    ansible_user: admin
+
+    # Use the SSH key from the current user's home directory.
+    # Works both locally and on the GitHub Actions runner.
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_rsa"
+
+  children:
+    prod:
+      hosts:
+        zihao.cheng.takima.school:

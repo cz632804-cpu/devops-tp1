@@ -1,0 +1,20 @@
+
+---
+# Deploy the Spring Boot image published during TP02.
+- name: Deploy Spring Boot backend
+  community.docker.docker_container:
+    name: backend
+    image: nifdgg/tp01-backend:latest
+    pull: true
+    state: started
+    restart_policy: unless-stopped
+
+    # Connect backend and PostgreSQL through Docker's internal DNS.
+    networks:
+      - name: app-network
+
+    # Spring Boot connects to the database container named "database".
+    env:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://database:5432/db
+      SPRING_DATASOURCE_USERNAME: usr
+      SPRING_DATASOURCE_PASSWORD: "{{ db_password }}"

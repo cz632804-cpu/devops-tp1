@@ -1,0 +1,6 @@
+---
+# Create a dedicated network so application containers can communicate by name.
+- name: Create application Docker network
+  community.docker.docker_network:
+    name: app-network
+    state: present

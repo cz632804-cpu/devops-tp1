@@ -65,3 +65,31 @@ jobs:
           context: ./http-server
           push: true
           tags: nifdgg/tp01-http-server:latest
+      # Install Ansible on the GitHub Actions runner.
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible openssh-client
+          ansible-galaxy collection install community.docker
+
+      # Deploy only after all three Docker images have been published.
+      - name: Deploy application with Ansible
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.ANSIBLE_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.ANSIBLE_SSH_KNOWN_HOSTS }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          # Store SSH credentials outside the checked-out repository.
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+          # Require verification of the remote server's host key.
+          export ANSIBLE_HOST_KEY_CHECKING=True
+
+          cd ansible
+          ansible-playbook -i inventories/setup.yml playbook.yml
