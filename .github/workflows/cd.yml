@@ -62,7 +62,8 @@ jobs:
       - name: Build and push HTTP server
         uses: docker/build-push-action@v6
         with:
-          context: ./http-server
+          context: .
+          file: ./http-server/Dockerfile
           push: true
           tags: nifdgg/tp01-http-server:latest
       # Install Ansible on the GitHub Actions runner.

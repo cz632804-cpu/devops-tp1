@@ -1,24 +1,35 @@
-# Apache HTTP Server 2.4
+
+# Build the Vue frontend provided by the teacher.
+FROM node:18-bullseye AS frontend-build
+
+WORKDIR /app
+
+# Install Vue dependencies.
+COPY devops-front/package.json ./
+RUN npm install --registry=https://registry.npmjs.org/
+
+# Build the Vue application.
+COPY devops-front/ ./
+ENV NODE_OPTIONS=--openssl-legacy-provider
+RUN npm run build
+
+# Use Apache to serve Vue and proxy API requests.
 FROM httpd:2.4
 
-# Enable the modules required for reverse proxying.
 RUN sed -i \
     -e 's/^#LoadModule proxy_module/LoadModule proxy_module/' \
     -e 's/^#LoadModule proxy_http_module/LoadModule proxy_http_module/' \
+    -e 's/^#LoadModule rewrite_module/LoadModule rewrite_module/' \
     /usr/local/apache2/conf/httpd.conf
 
-# Configure a global server name to avoid AH00558 warnings.
-RUN echo "ServerName localhost" \
-    >> /usr/local/apache2/conf/httpd.conf
+RUN echo "ServerName localhost" >> /usr/local/apache2/conf/httpd.conf
 
-# Copy the static landing page.
-COPY index.html /usr/local/apache2/htdocs/index.html
+# Copy the compiled Vue application.
+COPY --from=frontend-build /app/dist/ /usr/local/apache2/htdocs/
 
-# Copy the reverse proxy configuration.
-COPY proxy.conf /usr/local/apache2/conf/extra/proxy.conf
+# Copy Apache reverse proxy configuration.
+COPY http-server/proxy.conf /usr/local/apache2/conf/extra/proxy.conf
 
-# Load the custom Apache configuration.
-RUN echo "Include conf/extra/proxy.conf" \
-    >> /usr/local/apache2/conf/httpd.conf
+RUN echo "Include conf/extra/proxy.conf" >> /usr/local/apache2/conf/httpd.conf
 
 EXPOSE 80

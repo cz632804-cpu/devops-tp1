@@ -1,14 +1,14 @@
-# DevOps TP01 + TP02 — Docker and CI/CD
+# DevOps TP01 + TP02 + TP03 — Docker, CI/CD and Ansible
 
 ## Project overview
 
-This project implements a three-tier application using Docker:
+This project implements a three-tier application using Docker, with a Vue.js frontend:
 
-- Apache HTTP Server 2.4 as a reverse proxy
+- Vue.js frontend (from the teacher's [`devops-front`](https://github.com/takima-training/devops-front) repository), served by Apache HTTP Server 2.4
 - Spring Boot 3.4.5 with Java 21 as the backend
 - PostgreSQL 17.2 as the database
 
-TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**.
+TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**. TP03 introduces Ansible deployment to a remote server. The teacher-provided Vue.js frontend has also been integrated and tested locally; deployment of this new frontend to the remote server is not yet verified.
 
 Repository: https://github.com/cz632804-cpu/devops-tp1
 
@@ -172,13 +172,17 @@ Expected response:
 {"id":1,"content":"Hello, World!"}
 ```
 
-The database-backed API provides:
+The database-backed API provides the following Spring Boot routes (the reverse proxy exposes them with the `/api` prefix):
 
 ```http
 GET /departments
-GET /departments/IRC/students
-GET /students/1
+GET /departments/{name}
+GET /departments/{name}/students
+GET /students/{id}
+POST /students
 ```
+
+The `GET /departments/{name}` and `POST /students` endpoints were added to support the teacher's Vue frontend. The local department and student listing was verified in the browser; the Add Student action should be checked separately after rebuilding the backend.
 
 For example, the IRC endpoint returns student information with the associated department.
 
@@ -196,17 +200,20 @@ In this project, Apache listens on port 80 inside its container and forwards API
 
 The Docker Compose configuration publishes Apache on host port 8081.
 
-The Apache landing page is available at:
+The Vue.js frontend is available at:
 
 ```text
-http://localhost:8081/index.html
+http://localhost:8081/
 ```
 
-The API is available through the proxy at:
+The API is accessible through Apache under `/api/`, for example:
 
 ```text
-http://localhost:8081/departments/IRC/students
+http://localhost:8081/api/departments
+http://localhost:8081/api/departments/IRC/students
 ```
+
+Apache removes the `/api/` prefix when forwarding to `http://backend:8080/`. A fallback rewrite to `/index.html` allows Vue Router routes such as `/departments/IRC` to work on refresh.
 
 ## 4. Docker Compose
 
@@ -305,9 +312,9 @@ The original demo values (`db`, `usr`, `pwd`) are intended only for a local teac
 
 **http-server**
 
-- Builds an Apache HTTP Server image.
-- Serves a simple HTML landing page.
-- Forwards API requests to `backend:8080`.
+- Builds the teacher-provided Vue.js frontend in a Node.js build stage.
+- Copies the compiled `dist/` files into an Apache HTTP Server runtime image.
+- Serves the Vue.js application and forwards `/api/` requests to `backend:8080`.
 - Maps host port 8081 to container port 80.
 - Depends on the backend service.
 
@@ -322,13 +329,13 @@ A named PostgreSQL volume preserves the database across container recreation.
 Architecture:
 
 ```text
-Client
+Browser (Vue.js frontend)
   |
   | localhost:8081
   v
-Apache HTTP Server
+Apache HTTP Server (Vue static files + /api reverse proxy)
   |
-  | backend:8080
+  | /api/* -> backend:8080/*
   v
 Spring Boot API
   |
@@ -404,23 +411,22 @@ Verify the services:
 docker compose ps
 ```
 
-Test the greeting API:
+Test the backend through Apache:
 
 ```bash
-curl http://localhost:8081/
+curl http://localhost:8081/api/departments
+curl http://localhost:8081/api/departments/IRC
+curl http://localhost:8081/api/departments/IRC/students
 ```
 
-Test the database-backed API:
-
-```bash
-curl http://localhost:8081/departments/IRC/students
-```
-
-Test the Apache landing page:
+Open the Vue.js frontend and select a department:
 
 ```text
-http://localhost:8081/index.html
+http://localhost:8081/
+http://localhost:8081/departments/IRC
 ```
+
+The frontend's department list and student list were verified locally. Also verify student creation through the **Add** button after rebuilding the Spring Boot image; it is not claimed as verified here.
 
 Verify PostgreSQL:
 
@@ -495,7 +501,7 @@ CD checks out the **validated commit SHA** from the successful CI, logs into Doc
 | --- | --- |
 | `nifdgg/tp01-backend:latest` | `./backend/simple-api` |
 | `nifdgg/tp01-database:latest` | `./database` |
-| `nifdgg/tp01-http-server:latest` | `./http-server` |
+| `nifdgg/tp01-http-server:latest` | repository root (`.`), Dockerfile `./http-server/Dockerfile` |
 
 Publishing uses `docker/build-push-action@v6`. The images can be pulled on a different machine without rebuilding their Dockerfiles.
 
@@ -547,562 +553,102 @@ In a **single GitHub Actions workflow**, `needs` creates a dependency between jo
 
 A registry such as Docker Hub distributes versioned images to other developers and deployment servers. Pushing images from CI/CD enables a build that passed tests and the quality check to be retrieved and deployed elsewhere without repeating the local build steps.
 
-## 9. TP03 — Ansible Deployment
+## 9. TP03 — Ansible deployment and Vue.js frontend
 
-TP03 extends the existing Docker and CI/CD project by automating the installation of Docker and the deployment of the application on a remote Linux server using Ansible.
+### Ansible deployment
 
-The deployed application contains the same three services used in TP01:
+The `ansible/` directory contains the deployment playbook and the Ansible roles used to provision and deploy the Dockerized application to the school server. The existing TP03 deployment was configured before the Vue.js frontend was integrated. The frontend changes are currently on the `feature/teacher-frontend` branch; the remote deployment of these changes has not yet been verified.
 
-- PostgreSQL database
-- Spring Boot backend
-- Apache HTTP Server reverse proxy
+The deployment workflow remains: CI validates the backend on `main`, CD builds and pushes Docker images to Docker Hub, and Ansible deploys the images to the target host.
 
-The remote server used for this TP is:
+### Teacher-provided Vue.js frontend
 
-`zihao.cheng.takima.school`
+Frontend source: https://github.com/takima-training/devops-front
 
-Ansible connects to the server using SSH with the `admin` account.
+Files relevant to the frontend integration:
 
-### 3-1. Ansible inventory and commands
+- `devops-front/src/components/DepartmentList.vue` — fetches `/api/departments`.
+- `devops-front/src/components/Department.vue` — fetches department details and students and submits new students using `/api` routes.
+- `http-server/Dockerfile` — builds Vue.js using Node.js and serves the generated files with Apache.
+- `http-server/proxy.conf` — routes `/api/` to Spring Boot and falls back to the Vue entry page for client-side navigation.
+- `docker-compose.yml` — builds Apache from the repository root so Docker can access `devops-front/`.
+- `.github/workflows/cd.yml` — uses the repository-root build context for the Apache image.
+- `backend/simple-api/src/main/java/fr/takima/training/simpleapi/controller/StudentController.java` — provides student and department API endpoints.
 
-**What is an Ansible inventory?**
+The Vue application no longer calls `localhost:8080` directly. Instead, it makes same-origin requests to `/api/`, which Apache proxies internally to Spring Boot. This avoids exposing the backend port to the browser and avoids cross-origin requests for this frontend.
 
-An Ansible inventory defines the hosts that Ansible manages. It can organize hosts into groups and specify connection settings, such as SSH users and authentication keys.
+**Local verification:** the Vue homepage, department navigation, and student listing have been displayed successfully at `http://localhost:8081/`. Student creation and the new frontend's remote deployment must be validated separately.
 
-Our inventory is located at:
+## 10. TP03 — Questions and answers (Ansible)
 
-`ansible/inventories/setup.yml`
+> These are explanations of the Ansible concepts used in this project. They are not presented as verbatim questions from the teacher's TP03 handout, which was not provided with this README.
 
-It defines the production server and uses the SSH user `admin`.
+### 3-1. What is Ansible and why use it?
 
-```yaml
-all:
-  vars:
-    ansible_user: admin
-    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_rsa"
-  children:
-    prod:
-      hosts:
-        zihao.cheng.takima.school:
-```
+Ansible is an agentless configuration-management and automation tool. It connects to the target Linux host over SSH and applies declarative tasks. In this project, it automates provisioning and deployment so we do not have to repeat Docker installation and container commands manually on the school server.
 
-The SSH private key is stored outside the Git repository and must never be committed.
+### 3-2. What is an inventory?
 
-**How can we test the Ansible connection?**
+An inventory identifies the machines Ansible manages and their SSH connection settings. For this TP, it targets the school server (`zihao.cheng.takima.school`), while the playbook defines the tasks to execute there. The server host and SSH user must match the project's actual inventory; credentials and private keys must not be committed.
 
-From the `ansible` directory:
+### 3-3. What is an Ansible playbook?
+
+A playbook is a YAML file containing one or more plays. Each play specifies target hosts and tasks or roles to apply. In this project, `ansible/playbook.yml` orchestrates the setup and deployment of the Docker services.
+
+### 3-4. What are Ansible roles, and why use them?
+
+Roles organize related tasks into reusable, maintainable components. Our project separates responsibilities into `docker`, `network`, `database`, `backend`, and `proxy` roles. This is easier to read and update than maintaining all deployment commands in one large playbook. Role directory scaffolding does not by itself mean that every optional handler, template, or test has been implemented.
+
+### 3-5. What does idempotency mean?
+
+An operation is idempotent when repeating it has the same intended result without introducing unnecessary changes. Ansible modules should describe the desired state, such as an installed package or a running container. We should verify idempotency by rerunning the playbook and inspecting the `changed` count; we should not claim every task is fully idempotent without this check.
+
+### 3-6. How does Ansible deploy the Docker application?
+
+The workflow builds Docker images in GitHub Actions, publishes them to Docker Hub, and runs the Ansible deployment after successful CI on `main`. The server pulls the published images and runs the PostgreSQL, Spring Boot and Apache containers using the configuration in the Ansible roles. In the updated application, the Apache image also contains the compiled Vue frontend.
+
+### 3-7. Why use a reverse proxy on the server?
+
+Apache serves the Vue static assets and provides one public HTTP entry point. Requests to `/api/` are sent to `backend:8080/` on the internal Docker network, and other frontend routes are handled by Vue. PostgreSQL is accessed by the backend on `database:5432`; its port does not need to be exposed publicly.
+
+### 3-8. What is the difference between CI and CD in this project?
+
+CI checks the application with Maven/Testcontainers and, on a qualifying push to `main`, SonarQube Cloud. Once CI succeeds, CD builds and pushes the Docker images and uses Ansible to deploy them to the school server. A push to `feature/teacher-frontend` alone does not deploy the new frontend to the school server.
+
+### 3-9. How are sensitive variables handled?
+
+GitHub Actions secrets store automation credentials such as Docker Hub and SonarQube tokens. Local `.env` configuration must not be committed. Ansible Vault can encrypt sensitive Ansible variables, but it is not claimed as implemented in this project. Secrets must not be placed in a public README or committed inventory.
+
+### 3-10. How do we verify the deployment?
+
+Check that the Ansible playbook finishes successfully, inspect the containers on the server, and test the public site in a browser. Confirm that the Vue homepage loads, the IRC department and student list are displayed, and API requests reach Spring Boot through `/api/`. Student creation should be demonstrated only after confirming that `POST /students` works. The new Vue version has been verified locally; its remote deployment is still pending verification.
+
+## 11. How to demonstrate TP01, TP02 and TP03
+
+**TP01 — Docker:**
 
 ```bash
-ansible all -i inventories/setup.yml -m ping
-```
-
-A successful connection returns `SUCCESS` and `pong`.
-
-**How can we retrieve information about the remote server?**
-
-```bash
-ansible all -i inventories/setup.yml -m setup
-```
-
-The `setup` module collects system information, known as Ansible facts.
-
-**What does `--become` do?**
-
-The `--become` option allows Ansible to execute commands with elevated privileges, usually through `sudo`.
-
-For example:
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker ps" --become
-```
-
-### 3-2. Ansible playbook and roles
-
-**What is an Ansible playbook?**
-
-An Ansible playbook is a YAML file describing the configuration and tasks that should be executed on managed servers.
-
-Our main playbook is:
-
-`ansible/playbook.yml`
-
-It contains two plays.
-
-The first play installs and configures Docker:
-
-```yaml
-- name: Configure Docker server
-  hosts: all
-  gather_facts: true
-  become: true
-  roles:
-    - docker
-```
-
-The second play deploys the application:
-
-```yaml
-- name: Configure application network
-  hosts: all
-  gather_facts: false
-  become: true
-  vars:
-    ansible_python_interpreter: /opt/docker_venv/bin/python
-    db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
-  roles:
-    - network
-    - database
-    - backend
-    - proxy
-```
-
-We use two plays because Docker installation requires the system Python environment, while Docker container management uses a dedicated Python virtual environment.
-
-The database password is retrieved from the `DB_PASSWORD` environment variable rather than being hardcoded in the playbook.
-
-**Why use Ansible roles?**
-
-Roles organize related tasks into reusable components. This makes the deployment easier to understand, maintain and modify.
-
-Our project uses five roles:
-
-| Role | Purpose |
-| --- | --- |
-| `docker` | Install and configure Docker Engine |
-| `network` | Create the Docker application network |
-| `database` | Deploy PostgreSQL and its persistent volume |
-| `backend` | Deploy the Spring Boot application |
-| `proxy` | Deploy Apache HTTP Server |
-
-The relevant directory structure is:
-
-```text
-ansible/
-├── inventories/
-│   └── setup.yml
-├── playbook.yml
-└── roles/
-    ├── docker/
-    │   └── tasks/
-    │       └── main.yml
-    ├── network/
-    │   └── tasks/
-    │       └── main.yml
-    ├── database/
-    │   └── tasks/
-    │       └── main.yml
-    ├── backend/
-    │   └── tasks/
-    │       └── main.yml
-    └── proxy/
-        └── tasks/
-            └── main.yml
-```
-
-**What is idempotence in Ansible?**
-
-Idempotence means that running the same configuration multiple times should result in the same desired system state.
-
-For example, when Docker is already installed and correctly configured, Ansible should not reinstall it unnecessarily.
-
-### Docker role
-
-File:
-
-`ansible/roles/docker/tasks/main.yml`
-
-This role:
-
-- Installs the required system packages.
-- Configures the official Docker repository.
-- Installs Docker Engine and Docker Compose.
-- Creates the Python virtual environment `/opt/docker_venv`.
-- Installs the required Docker Python libraries.
-- Starts and enables the Docker service.
-
-The virtual environment separates Docker Python dependencies from the operating system's Python packages.
-
-### Network role
-
-File:
-
-`ansible/roles/network/tasks/main.yml`
-
-The network role uses `community.docker.docker_network` to create:
-
-`app-network`
-
-This network allows the containers to communicate using their Docker names.
-
-For example, the backend reaches PostgreSQL at `database:5432`.
-
-### Database role
-
-File:
-
-`ansible/roles/database/tasks/main.yml`
-
-The database role uses the image:
-
-`nifdgg/tp01-database:latest`
-
-It creates:
-
-- A PostgreSQL container named `database`.
-- A persistent volume named `postgres-data`.
-
-The volume is mounted at:
-
-`/var/lib/postgresql/data`
-
-This preserves database data when the container is recreated.
-
-### Backend role
-
-File:
-
-`ansible/roles/backend/tasks/main.yml`
-
-The backend role deploys the Spring Boot image:
-
-`nifdgg/tp01-backend:latest`
-
-The container is named `backend` and uses port `8080` internally.
-
-Its PostgreSQL connection is configured using:
-
-```text
-SPRING_DATASOURCE_URL=jdbc:postgresql://database:5432/db
-SPRING_DATASOURCE_USERNAME=usr
-```
-
-The database password is provided by the Ansible variable `db_password`.
-
-### Proxy role
-
-File:
-
-`ansible/roles/proxy/tasks/main.yml`
-
-The proxy role deploys:
-
-`nifdgg/tp01-http-server:latest`
-
-The container is named `http-server`.
-
-Apache publishes port `80` on the remote server and forwards API requests to Spring Boot.
-
-The `/index.html` landing page is served by Apache.
-
-### 3-3. Deploying Docker containers with Ansible
-
-**How does Ansible manage Docker containers?**
-
-The `community.docker.docker_container` module creates and manages Docker containers.
-
-It supports configuration options including:
-
-- Docker image and container name
-- Container state and restart policy
-- Environment variables
-- Docker networks
-- Persistent volumes
-- Published ports
-
-The Docker image definitions use `pull: true` so the server checks for updated images in Docker Hub during deployment.
-
-**Why use Docker networks?**
-
-A Docker network allows containers to communicate through service names instead of relying on fixed IP addresses.
-
-**Why use a PostgreSQL volume?**
-
-The database volume preserves data independently of the PostgreSQL container lifecycle.
-
-**How can we deploy the application manually?**
-
-First, install the Docker Ansible collection if it is not already available:
-
-```bash
-ansible-galaxy collection install community.docker
-```
-
-Then navigate to the Ansible directory:
-
-```bash
-cd ansible
-```
-
-Check connectivity:
-
-```bash
-ansible all -i inventories/setup.yml -m ping
-```
-
-Check the playbook syntax:
-
-```bash
-ansible-playbook -i inventories/setup.yml playbook.yml --syntax-check
-```
-
-For a manual deployment, securely provide the database password:
-
-```bash
-read -rs -p "Database password: " DB_PASSWORD
-echo
-export DB_PASSWORD
-```
-
-Run the playbook:
-
-```bash
-ansible-playbook -i inventories/setup.yml playbook.yml
-```
-
-Remove the password variable from the current shell environment afterward:
-
-```bash
-unset DB_PASSWORD
-```
-
-The database password must match the password used by the existing PostgreSQL instance.
-
-**How can we verify the deployed containers?**
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker ps" --become
-```
-
-The expected containers are:
-
-- `database`
-- `backend`
-- `http-server`
-
-Check the Docker network:
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker network ls" --become
-```
-
-Check PostgreSQL availability:
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker exec database pg_isready -U usr -d db" --become
-```
-
-### TP03 checkpoints
-
-**Checkpoint 1 — Docker installed**
-
-Ansible successfully installed and configured Docker on the remote server.
-
-We verified the Docker service using:
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker --version"
-```
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "systemctl is-active docker"
-```
-
-Docker was installed successfully and the service was active.
-
-**Checkpoint 2 — API accessible**
-
-Ansible successfully deployed the three application containers.
-
-The public API is accessible at:
-
-http://zihao.cheng.takima.school/
-
-A successful response is a JSON object containing an ID and the message `Hello, World!`.
-
-The backend is accessed through the Apache reverse proxy.
-
-**Checkpoint 3 — Continuous Deployment**
-
-The GitHub Actions CD workflow automatically:
-
-1. Checks out the commit validated by CI.
-2. Logs in to Docker Hub.
-3. Builds and publishes the backend image.
-4. Builds and publishes the database image.
-5. Builds and publishes the Apache image.
-6. Installs Ansible on the GitHub Actions runner.
-7. Executes the Ansible playbook on the remote server.
-
-The deployment is executed after a successful CI workflow for a push to `main`.
-
-The workflow uses the following repository secrets:
-
-| Secret | Purpose |
-| --- | --- |
-| `DOCKERHUB_USERNAME` | Docker Hub username |
-| `DOCKERHUB_TOKEN` | Docker Hub access token |
-| `ANSIBLE_SSH_PRIVATE_KEY` | SSH authentication |
-| `ANSIBLE_SSH_KNOWN_HOSTS` | Remote SSH host verification |
-| `DB_PASSWORD` | Database password |
-
-The GitHub Actions workflow **CD DevOps #6** completed successfully for commit `ea6d6b1`.
-
-The `Deploy application with Ansible` step also completed successfully.
-
-This verifies that image publication and remote deployment were automated.
-
-**Checkpoint 4 — Front working**
-
-The Apache landing page is accessible at:
-
-http://zihao.cheng.takima.school/index.html
-
-It provides access to the application endpoints:
-
-- Greeting API: `/`
-- Departments: `/departments`
-- IRC Students: `/departments/IRC/students`
-- Student Details: `/students/1`
-
-The frontend and backend are accessible through the same Apache reverse proxy.
-
-### TP03 — Security considerations
-
-**Why should we avoid deploying unverified Docker images?**
-
-An unverified image may contain defects, vulnerabilities or unexpected code.
-
-Our workflow requires the CI checks to succeed before Docker images are published and deployed.
-
-**Why use GitHub Actions Secrets?**
-
-GitHub Actions Secrets protect sensitive information such as SSH private keys, Docker Hub tokens and database passwords from being stored directly in the repository.
-
-**Why verify SSH host keys?**
-
-SSH host key verification helps ensure that the deployment process connects to the expected server rather than an impersonating host.
-
-**What could be improved for a production deployment?**
-
-A production environment should use:
-
-- HTTPS instead of plain HTTP.
-- Strong database credentials.
-- Immutable Docker image digests instead of mutable `latest` tags.
-- Restricted SSH permissions and deployment credentials.
-- Health checks, monitoring and backups.
-- Protected branches and deployment approvals.
-- A rollback procedure for unsuccessful deployments.
-
-Ansible Vault could also be introduced to encrypt sensitive variables, although this project currently uses GitHub Actions Secrets and environment variables for deployment credentials.
-
----
-
-## 10. How to demonstrate TP01, TP02 and TP03
-
-### TP01 — Docker
-
-From the repository root, prepare the local environment variables and start the application:
-
-```bash
-cp .env.example .env
-# Configure the local environment variables in .env.
+# From the repository root, after preparing .env:
 docker compose up -d --build
 docker compose ps
 ```
 
-Open the local application:
+Open `http://localhost:8081/`, select a department such as IRC, and display its students. Show that the frontend uses `/api/departments` and `/api/departments/IRC/students`, Apache proxies these requests to Spring Boot, and PostgreSQL stores the data. Demonstrate the Add button only after validating student creation.
 
-http://localhost:8081/index.html
+**TP02 — Automation:**
 
-Demonstrate the following endpoints:
+Open the GitHub Actions page and show successful CI and CD runs for the previously deployed version, including Maven/Testcontainers and SonarQube in CI and Docker build-and-push steps in CD. The new frontend build must be validated on `main` before claiming that this version was deployed.
 
-- Greeting API: `http://localhost:8081/`
-- Departments: `http://localhost:8081/departments`
-- IRC Students: `http://localhost:8081/departments/IRC/students`
-- Student Details: `http://localhost:8081/students/1`
+**TP03 — Deployment and frontend integration:**
 
-Explain that Apache forwards requests to Spring Boot and that Spring Boot retrieves data from PostgreSQL.
+Show `ansible/playbook.yml` and the Ansible roles, then show `http-server/Dockerfile`, `http-server/proxy.conf`, and the modified Vue `fetch` calls. Demonstrate the locally running Vue frontend. Show the remote site only after the new Docker images have been built, pushed, and deployed successfully.
 
-Verify database persistence:
+## 12. Conclusion
 
-```bash
-docker compose exec database psql -U usr -d db -c "SELECT * FROM students;"
-```
+TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery. TP03 adds Ansible-based deployment. The teacher-provided Vue frontend is integrated and works locally; remote deployment of this updated frontend remains to be verified.
 
-### TP02 — CI/CD
-
-Open the GitHub Actions page:
-
-https://github.com/cz632804-cpu/devops-tp1/actions
-
-Show the successful `CI DevOps` workflow.
-
-Explain the main steps:
-
-- Maven build and tests
-- PostgreSQL integration testing with Testcontainers
-- SonarQube Cloud analysis
-- Quality Gate verification
-
-Then open the `CD DevOps` workflow and show the three Docker image build-and-push steps.
-
-Docker Hub images:
-
-- https://hub.docker.com/r/nifdgg/tp01-database
-- https://hub.docker.com/r/nifdgg/tp01-backend
-- https://hub.docker.com/r/nifdgg/tp01-http-server
-
-Explain that image publication only occurs after the required CI checks succeed.
-
-### TP03 — Ansible
-
-Open the Ansible inventory:
-
-`ansible/inventories/setup.yml`
-
-Show the target server and SSH connection settings.
-
-Open:
-
-`ansible/playbook.yml`
-
-Explain the two plays and five roles.
-
-Demonstrate an Ansible connectivity check:
+The application can be built and started with:
 
 ```bash
-cd ansible
-ansible all -i inventories/setup.yml -m ping
+docker compose up -d --build
 ```
-
-Verify the remote Docker containers:
-
-```bash
-ansible all -i inventories/setup.yml -m command -a "docker ps" --become
-```
-
-Show the remote application:
-
-- Frontend: http://zihao.cheng.takima.school/index.html
-- Backend API: http://zihao.cheng.takima.school/
-
-Finally, open GitHub Actions and select the successful **CD DevOps #6** workflow.
-
-Show the green `Deploy application with Ansible` step.
-
-Explain that the application is automatically deployed to the remote server after a successful CI run and Docker image publication.
-
----
-
-## 11. Conclusion
-
-TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication.
-
-TP02 extends the same application with automated Maven/Testcontainers tests, SonarQube Cloud quality checks, and GitHub Actions-based Docker image delivery.
-
-TP03 adds infrastructure automation using Ansible. The project automatically installs Docker, creates the application network, and deploys PostgreSQL, Spring Boot and Apache HTTP Server on a remote Linux server.
-
-GitHub Actions connects the three stages by running CI checks, publishing Docker images and deploying the application using Ansible.
-
-The completed project demonstrates a DevOps workflow covering application containerization, automated testing, continuous delivery and remote deployment.
