@@ -547,28 +547,562 @@ In a **single GitHub Actions workflow**, `needs` creates a dependency between jo
 
 A registry such as Docker Hub distributes versioned images to other developers and deployment servers. Pushing images from CI/CD enables a build that passed tests and the quality check to be retrieved and deployed elsewhere without repeating the local build steps.
 
-## 9. How to demonstrate both TPs
+## 9. TP03 — Ansible Deployment
 
-**TP01 — Docker:**
+TP03 extends the existing Docker and CI/CD project by automating the installation of Docker and the deployment of the application on a remote Linux server using Ansible.
+
+The deployed application contains the same three services used in TP01:
+
+- PostgreSQL database
+- Spring Boot backend
+- Apache HTTP Server reverse proxy
+
+The remote server used for this TP is:
+
+`zihao.cheng.takima.school`
+
+Ansible connects to the server using SSH with the `admin` account.
+
+### 3-1. Ansible inventory and commands
+
+**What is an Ansible inventory?**
+
+An Ansible inventory defines the hosts that Ansible manages. It can organize hosts into groups and specify connection settings, such as SSH users and authentication keys.
+
+Our inventory is located at:
+
+`ansible/inventories/setup.yml`
+
+It defines the production server and uses the SSH user `admin`.
+
+```yaml
+all:
+  vars:
+    ansible_user: admin
+    ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') }}/.ssh/id_rsa"
+  children:
+    prod:
+      hosts:
+        zihao.cheng.takima.school:
+```
+
+The SSH private key is stored outside the Git repository and must never be committed.
+
+**How can we test the Ansible connection?**
+
+From the `ansible` directory:
 
 ```bash
-# From the repository root, after preparing .env:
+ansible all -i inventories/setup.yml -m ping
+```
+
+A successful connection returns `SUCCESS` and `pong`.
+
+**How can we retrieve information about the remote server?**
+
+```bash
+ansible all -i inventories/setup.yml -m setup
+```
+
+The `setup` module collects system information, known as Ansible facts.
+
+**What does `--become` do?**
+
+The `--become` option allows Ansible to execute commands with elevated privileges, usually through `sudo`.
+
+For example:
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker ps" --become
+```
+
+### 3-2. Ansible playbook and roles
+
+**What is an Ansible playbook?**
+
+An Ansible playbook is a YAML file describing the configuration and tasks that should be executed on managed servers.
+
+Our main playbook is:
+
+`ansible/playbook.yml`
+
+It contains two plays.
+
+The first play installs and configures Docker:
+
+```yaml
+- name: Configure Docker server
+  hosts: all
+  gather_facts: true
+  become: true
+  roles:
+    - docker
+```
+
+The second play deploys the application:
+
+```yaml
+- name: Configure application network
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    ansible_python_interpreter: /opt/docker_venv/bin/python
+    db_password: "{{ lookup('env', 'DB_PASSWORD') }}"
+  roles:
+    - network
+    - database
+    - backend
+    - proxy
+```
+
+We use two plays because Docker installation requires the system Python environment, while Docker container management uses a dedicated Python virtual environment.
+
+The database password is retrieved from the `DB_PASSWORD` environment variable rather than being hardcoded in the playbook.
+
+**Why use Ansible roles?**
+
+Roles organize related tasks into reusable components. This makes the deployment easier to understand, maintain and modify.
+
+Our project uses five roles:
+
+| Role | Purpose |
+| --- | --- |
+| `docker` | Install and configure Docker Engine |
+| `network` | Create the Docker application network |
+| `database` | Deploy PostgreSQL and its persistent volume |
+| `backend` | Deploy the Spring Boot application |
+| `proxy` | Deploy Apache HTTP Server |
+
+The relevant directory structure is:
+
+```text
+ansible/
+├── inventories/
+│   └── setup.yml
+├── playbook.yml
+└── roles/
+    ├── docker/
+    │   └── tasks/
+    │       └── main.yml
+    ├── network/
+    │   └── tasks/
+    │       └── main.yml
+    ├── database/
+    │   └── tasks/
+    │       └── main.yml
+    ├── backend/
+    │   └── tasks/
+    │       └── main.yml
+    └── proxy/
+        └── tasks/
+            └── main.yml
+```
+
+**What is idempotence in Ansible?**
+
+Idempotence means that running the same configuration multiple times should result in the same desired system state.
+
+For example, when Docker is already installed and correctly configured, Ansible should not reinstall it unnecessarily.
+
+### Docker role
+
+File:
+
+`ansible/roles/docker/tasks/main.yml`
+
+This role:
+
+- Installs the required system packages.
+- Configures the official Docker repository.
+- Installs Docker Engine and Docker Compose.
+- Creates the Python virtual environment `/opt/docker_venv`.
+- Installs the required Docker Python libraries.
+- Starts and enables the Docker service.
+
+The virtual environment separates Docker Python dependencies from the operating system's Python packages.
+
+### Network role
+
+File:
+
+`ansible/roles/network/tasks/main.yml`
+
+The network role uses `community.docker.docker_network` to create:
+
+`app-network`
+
+This network allows the containers to communicate using their Docker names.
+
+For example, the backend reaches PostgreSQL at `database:5432`.
+
+### Database role
+
+File:
+
+`ansible/roles/database/tasks/main.yml`
+
+The database role uses the image:
+
+`nifdgg/tp01-database:latest`
+
+It creates:
+
+- A PostgreSQL container named `database`.
+- A persistent volume named `postgres-data`.
+
+The volume is mounted at:
+
+`/var/lib/postgresql/data`
+
+This preserves database data when the container is recreated.
+
+### Backend role
+
+File:
+
+`ansible/roles/backend/tasks/main.yml`
+
+The backend role deploys the Spring Boot image:
+
+`nifdgg/tp01-backend:latest`
+
+The container is named `backend` and uses port `8080` internally.
+
+Its PostgreSQL connection is configured using:
+
+```text
+SPRING_DATASOURCE_URL=jdbc:postgresql://database:5432/db
+SPRING_DATASOURCE_USERNAME=usr
+```
+
+The database password is provided by the Ansible variable `db_password`.
+
+### Proxy role
+
+File:
+
+`ansible/roles/proxy/tasks/main.yml`
+
+The proxy role deploys:
+
+`nifdgg/tp01-http-server:latest`
+
+The container is named `http-server`.
+
+Apache publishes port `80` on the remote server and forwards API requests to Spring Boot.
+
+The `/index.html` landing page is served by Apache.
+
+### 3-3. Deploying Docker containers with Ansible
+
+**How does Ansible manage Docker containers?**
+
+The `community.docker.docker_container` module creates and manages Docker containers.
+
+It supports configuration options including:
+
+- Docker image and container name
+- Container state and restart policy
+- Environment variables
+- Docker networks
+- Persistent volumes
+- Published ports
+
+The Docker image definitions use `pull: true` so the server checks for updated images in Docker Hub during deployment.
+
+**Why use Docker networks?**
+
+A Docker network allows containers to communicate through service names instead of relying on fixed IP addresses.
+
+**Why use a PostgreSQL volume?**
+
+The database volume preserves data independently of the PostgreSQL container lifecycle.
+
+**How can we deploy the application manually?**
+
+First, install the Docker Ansible collection if it is not already available:
+
+```bash
+ansible-galaxy collection install community.docker
+```
+
+Then navigate to the Ansible directory:
+
+```bash
+cd ansible
+```
+
+Check connectivity:
+
+```bash
+ansible all -i inventories/setup.yml -m ping
+```
+
+Check the playbook syntax:
+
+```bash
+ansible-playbook -i inventories/setup.yml playbook.yml --syntax-check
+```
+
+For a manual deployment, securely provide the database password:
+
+```bash
+read -rs -p "Database password: " DB_PASSWORD
+echo
+export DB_PASSWORD
+```
+
+Run the playbook:
+
+```bash
+ansible-playbook -i inventories/setup.yml playbook.yml
+```
+
+Remove the password variable from the current shell environment afterward:
+
+```bash
+unset DB_PASSWORD
+```
+
+The database password must match the password used by the existing PostgreSQL instance.
+
+**How can we verify the deployed containers?**
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker ps" --become
+```
+
+The expected containers are:
+
+- `database`
+- `backend`
+- `http-server`
+
+Check the Docker network:
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker network ls" --become
+```
+
+Check PostgreSQL availability:
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker exec database pg_isready -U usr -d db" --become
+```
+
+### TP03 checkpoints
+
+**Checkpoint 1 — Docker installed**
+
+Ansible successfully installed and configured Docker on the remote server.
+
+We verified the Docker service using:
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker --version"
+```
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "systemctl is-active docker"
+```
+
+Docker was installed successfully and the service was active.
+
+**Checkpoint 2 — API accessible**
+
+Ansible successfully deployed the three application containers.
+
+The public API is accessible at:
+
+http://zihao.cheng.takima.school/
+
+A successful response is a JSON object containing an ID and the message `Hello, World!`.
+
+The backend is accessed through the Apache reverse proxy.
+
+**Checkpoint 3 — Continuous Deployment**
+
+The GitHub Actions CD workflow automatically:
+
+1. Checks out the commit validated by CI.
+2. Logs in to Docker Hub.
+3. Builds and publishes the backend image.
+4. Builds and publishes the database image.
+5. Builds and publishes the Apache image.
+6. Installs Ansible on the GitHub Actions runner.
+7. Executes the Ansible playbook on the remote server.
+
+The deployment is executed after a successful CI workflow for a push to `main`.
+
+The workflow uses the following repository secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `DOCKERHUB_USERNAME` | Docker Hub username |
+| `DOCKERHUB_TOKEN` | Docker Hub access token |
+| `ANSIBLE_SSH_PRIVATE_KEY` | SSH authentication |
+| `ANSIBLE_SSH_KNOWN_HOSTS` | Remote SSH host verification |
+| `DB_PASSWORD` | Database password |
+
+The GitHub Actions workflow **CD DevOps #6** completed successfully for commit `ea6d6b1`.
+
+The `Deploy application with Ansible` step also completed successfully.
+
+This verifies that image publication and remote deployment were automated.
+
+**Checkpoint 4 — Front working**
+
+The Apache landing page is accessible at:
+
+http://zihao.cheng.takima.school/index.html
+
+It provides access to the application endpoints:
+
+- Greeting API: `/`
+- Departments: `/departments`
+- IRC Students: `/departments/IRC/students`
+- Student Details: `/students/1`
+
+The frontend and backend are accessible through the same Apache reverse proxy.
+
+### TP03 — Security considerations
+
+**Why should we avoid deploying unverified Docker images?**
+
+An unverified image may contain defects, vulnerabilities or unexpected code.
+
+Our workflow requires the CI checks to succeed before Docker images are published and deployed.
+
+**Why use GitHub Actions Secrets?**
+
+GitHub Actions Secrets protect sensitive information such as SSH private keys, Docker Hub tokens and database passwords from being stored directly in the repository.
+
+**Why verify SSH host keys?**
+
+SSH host key verification helps ensure that the deployment process connects to the expected server rather than an impersonating host.
+
+**What could be improved for a production deployment?**
+
+A production environment should use:
+
+- HTTPS instead of plain HTTP.
+- Strong database credentials.
+- Immutable Docker image digests instead of mutable `latest` tags.
+- Restricted SSH permissions and deployment credentials.
+- Health checks, monitoring and backups.
+- Protected branches and deployment approvals.
+- A rollback procedure for unsuccessful deployments.
+
+Ansible Vault could also be introduced to encrypt sensitive variables, although this project currently uses GitHub Actions Secrets and environment variables for deployment credentials.
+
+---
+
+## 10. How to demonstrate TP01, TP02 and TP03
+
+### TP01 — Docker
+
+From the repository root, prepare the local environment variables and start the application:
+
+```bash
+cp .env.example .env
+# Configure the local environment variables in .env.
 docker compose up -d --build
 docker compose ps
 ```
 
-Open `http://localhost:8081/index.html` and use its four links: Greeting API (`/`), Departments (`/departments`), IRC Students (`/departments/IRC/students`), and Student Details (`/students/1`). Show that Apache proxies requests to Spring Boot and that PostgreSQL holds the department/student data.
+Open the local application:
 
-**TP02 — Automation:**
+http://localhost:8081/index.html
 
-Open the GitHub Actions page and show the successful CI and CD runs, including Maven/Testcontainers and SonarQube in the CI job and three Docker build-and-push steps in CD. Then show the SonarQube Cloud project and three `latest` image tags on Docker Hub.
+Demonstrate the following endpoints:
 
-## 10. Conclusion
+- Greeting API: `http://localhost:8081/`
+- Departments: `http://localhost:8081/departments`
+- IRC Students: `http://localhost:8081/departments/IRC/students`
+- Student Details: `http://localhost:8081/students/1`
 
-TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the same application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery.
+Explain that Apache forwards requests to Spring Boot and that Spring Boot retrieves data from PostgreSQL.
 
-The application can be built and started with:
+Verify database persistence:
 
 ```bash
-docker compose up -d --build
+docker compose exec database psql -U usr -d db -c "SELECT * FROM students;"
 ```
+
+### TP02 — CI/CD
+
+Open the GitHub Actions page:
+
+https://github.com/cz632804-cpu/devops-tp1/actions
+
+Show the successful `CI DevOps` workflow.
+
+Explain the main steps:
+
+- Maven build and tests
+- PostgreSQL integration testing with Testcontainers
+- SonarQube Cloud analysis
+- Quality Gate verification
+
+Then open the `CD DevOps` workflow and show the three Docker image build-and-push steps.
+
+Docker Hub images:
+
+- https://hub.docker.com/r/nifdgg/tp01-database
+- https://hub.docker.com/r/nifdgg/tp01-backend
+- https://hub.docker.com/r/nifdgg/tp01-http-server
+
+Explain that image publication only occurs after the required CI checks succeed.
+
+### TP03 — Ansible
+
+Open the Ansible inventory:
+
+`ansible/inventories/setup.yml`
+
+Show the target server and SSH connection settings.
+
+Open:
+
+`ansible/playbook.yml`
+
+Explain the two plays and five roles.
+
+Demonstrate an Ansible connectivity check:
+
+```bash
+cd ansible
+ansible all -i inventories/setup.yml -m ping
+```
+
+Verify the remote Docker containers:
+
+```bash
+ansible all -i inventories/setup.yml -m command -a "docker ps" --become
+```
+
+Show the remote application:
+
+- Frontend: http://zihao.cheng.takima.school/index.html
+- Backend API: http://zihao.cheng.takima.school/
+
+Finally, open GitHub Actions and select the successful **CD DevOps #6** workflow.
+
+Show the green `Deploy application with Ansible` step.
+
+Explain that the application is automatically deployed to the remote server after a successful CI run and Docker image publication.
+
+---
+
+## 11. Conclusion
+
+TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication.
+
+TP02 extends the same application with automated Maven/Testcontainers tests, SonarQube Cloud quality checks, and GitHub Actions-based Docker image delivery.
+
+TP03 adds infrastructure automation using Ansible. The project automatically installs Docker, creates the application network, and deploys PostgreSQL, Spring Boot and Apache HTTP Server on a remote Linux server.
+
+GitHub Actions connects the three stages by running CI checks, publishing Docker images and deploying the application using Ansible.
+
+The completed project demonstrates a DevOps workflow covering application containerization, automated testing, continuous delivery and remote deployment.
