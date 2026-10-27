@@ -59,7 +59,8 @@ services:
   # Apache HTTP reverse proxy
   http-server:
     build:
-      context: ./http-server
+        context: .
+        dockerfile: http-server/Dockerfile
     image: tp01-http-server
     restart: unless-stopped
 
