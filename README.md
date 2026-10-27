@@ -8,7 +8,7 @@ This project implements a three-tier application using Docker, with a Vue.js fro
 - Spring Boot 3.4.5 with Java 21 as the backend
 - PostgreSQL 17.2 as the database
 
-TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**. TP03 introduces Ansible deployment to a remote server. The teacher-provided Vue.js frontend has also been integrated and tested locally; deployment of this new frontend to the remote server is not yet verified.
+TP01 deploys the application with Docker Compose and publishes images to Docker Hub. TP02 adds automated testing, SonarQube Cloud quality analysis, and GitHub Actions CI/CD in **this same repository**. TP03 introduces Ansible deployment to a remote server. The teacher-provided Vue.js frontend has been integrated, tested locally (including student creation), and deployed to the school server. The remote Vue application was reported working after merging the frontend changes into `main`.
 
 Repository: https://github.com/cz632804-cpu/devops-tp1
 
@@ -182,7 +182,7 @@ GET /students/{id}
 POST /students
 ```
 
-The `GET /departments/{name}` and `POST /students` endpoints were added to support the teacher's Vue frontend. The local department and student listing was verified in the browser; the Add Student action should be checked separately after rebuilding the backend.
+The `GET /departments/{name}` and `POST /students` endpoints were added to support the teacher's Vue frontend. The department and student listing and the **Add** student action were tested successfully in the local Vue application.
 
 For example, the IRC endpoint returns student information with the associated department.
 
@@ -426,7 +426,7 @@ http://localhost:8081/
 http://localhost:8081/departments/IRC
 ```
 
-The frontend's department list and student list were verified locally. Also verify student creation through the **Add** button after rebuilding the Spring Boot image; it is not claimed as verified here.
+The department list, student list, and student creation through the **Add** button were tested successfully locally.
 
 Verify PostgreSQL:
 
@@ -557,7 +557,7 @@ A registry such as Docker Hub distributes versioned images to other developers a
 
 ### Ansible deployment
 
-The `ansible/` directory contains the deployment playbook and the Ansible roles used to provision and deploy the Dockerized application to the school server. The existing TP03 deployment was configured before the Vue.js frontend was integrated. The frontend changes are currently on the `feature/teacher-frontend` branch; the remote deployment of these changes has not yet been verified.
+The `ansible/` directory contains the deployment playbook and the Ansible roles used to provision and deploy the Dockerized application to the school server. The Ansible deployment was initially configured before the Vue.js frontend integration. The frontend changes were merged from `feature/teacher-frontend` into `main`; the updated application was subsequently reported running on the school server.
 
 The deployment workflow remains: CI validates the backend on `main`, CD builds and pushes Docker images to Docker Hub, and Ansible deploys the images to the target host.
 
@@ -577,51 +577,73 @@ Files relevant to the frontend integration:
 
 The Vue application no longer calls `localhost:8080` directly. Instead, it makes same-origin requests to `/api/`, which Apache proxies internally to Spring Boot. This avoids exposing the backend port to the browser and avoids cross-origin requests for this frontend.
 
-**Local verification:** the Vue homepage, department navigation, and student listing have been displayed successfully at `http://localhost:8081/`. Student creation and the new frontend's remote deployment must be validated separately.
+**Verification:** the Vue homepage, department navigation, student listing, and **Add** student action have been tested locally at `http://localhost:8081/`. The updated Vue application was also reported running on the remote school server at `http://zihao.cheng.takima.school/`. Remote student creation has not been separately confirmed.
 
-## 10. TP03 — Questions and answers (Ansible)
+## 10. TP03 — Checkpoints and required questions
 
-> These are explanations of the Ansible concepts used in this project. They are not presented as verbatim questions from the teacher's TP03 handout, which was not provided with this README.
+### TP03 checkpoint status
 
-### 3-1. What is Ansible and why use it?
+| Checkpoint | Evidence in the project | Verification status |
+| --- | --- | --- |
+| Checkpoint 1 — Docker installed | Ansible `docker` role configures Docker on the target Linux server. | Previously demonstrated for the original deployment; recheck on the target when presenting. |
+| Checkpoint 2 — Deploy your App / API accessible | `ansible/playbook.yml` and the `network`, `database`, `backend`, and `proxy` roles deploy the three services. | Remote deployment is running; the updated Vue website is accessible on the school server. |
+| Checkpoint 3 — Continuous Deployment | `.github/workflows/cd.yml` builds/pushes Docker Hub images and runs Ansible after successful `main` CI. | The updated version was merged into `main` and is running remotely. Check the corresponding GitHub Actions run for CI/CD execution details. |
+| Checkpoint 4 — Front working | The teacher's Vue.js app is built with Node.js, served with Apache, and calls Spring Boot through `/api/`. | Local frontend, department/student navigation, and Add action tested; updated Vue website also runs on the school server. |
 
-Ansible is an agentless configuration-management and automation tool. It connects to the target Linux host over SSH and applies declarative tasks. In this project, it automates provisioning and deployment so we do not have to repeat Docker installation and container commands manually on the school server.
+### 3-1. Document your inventory and base commands
 
-### 3-2. What is an inventory?
+The Ansible inventory is `ansible/inventories/setup.yml`. It specifies the managed host, its group and the SSH connection settings. The school server for this project is `zihao.cheng.takima.school`; the remote connection uses the configured SSH account. A private SSH key, when required, stays outside the repository and must never be committed.
 
-An inventory identifies the machines Ansible manages and their SSH connection settings. For this TP, it targets the school server (`zihao.cheng.takima.school`), while the playbook defines the tasks to execute there. The server host and SSH user must match the project's actual inventory; credentials and private keys must not be committed.
+Run these commands from the `ansible/` directory (with the correct SSH credentials available on the machine running Ansible):
 
-### 3-3. What is an Ansible playbook?
+```bash
+# Display the target hosts and groups.
+ansible-inventory -i inventories/setup.yml --list
 
-A playbook is a YAML file containing one or more plays. Each play specifies target hosts and tasks or roles to apply. In this project, `ansible/playbook.yml` orchestrates the setup and deployment of the Docker services.
+# Check SSH connectivity to the managed host.
+ansible all -i inventories/setup.yml -m ping
 
-### 3-4. What are Ansible roles, and why use them?
+# Inspect the remote Linux distribution.
+ansible all -i inventories/setup.yml -m setup -a 'filter=ansible_distribution*'
+```
 
-Roles organize related tasks into reusable, maintainable components. Our project separates responsibilities into `docker`, `network`, `database`, `backend`, and `proxy` roles. This is easier to read and update than maintaining all deployment commands in one large playbook. Role directory scaffolding does not by itself mean that every optional handler, template, or test has been implemented.
+The inventory answers *where* to deploy; the playbook answers *what* to do. These commands are documentation of how to inspect and test the configuration, not a claim that each command was rerun after the Vue changes.
 
-### 3-5. What does idempotency mean?
+### 3-2. Document your playbook
 
-An operation is idempotent when repeating it has the same intended result without introducing unnecessary changes. Ansible modules should describe the desired state, such as an installed package or a running container. We should verify idempotency by rerunning the playbook and inspecting the `changed` count; we should not claim every task is fully idempotent without this check.
+The entry point is `ansible/playbook.yml`. It targets the inventory host and executes Ansible roles to install/configure Docker, create the application network, and deploy PostgreSQL, Spring Boot, and Apache. The roles keep the setup modular, with tasks under `ansible/roles/<role>/tasks/main.yml`.
 
-### 3-6. How does Ansible deploy the Docker application?
+```bash
+cd ansible
 
-The workflow builds Docker images in GitHub Actions, publishes them to Docker Hub, and runs the Ansible deployment after successful CI on `main`. The server pulls the published images and runs the PostgreSQL, Spring Boot and Apache containers using the configuration in the Ansible roles. In the updated application, the Apache image also contains the compiled Vue frontend.
+# Validate playbook syntax before applying changes.
+ansible-playbook -i inventories/setup.yml playbook.yml --syntax-check
 
-### 3-7. Why use a reverse proxy on the server?
+# Deploy the application to the configured server.
+ansible-playbook -i inventories/setup.yml playbook.yml
+```
 
-Apache serves the Vue static assets and provides one public HTTP entry point. Requests to `/api/` are sent to `backend:8080/` on the internal Docker network, and other frontend routes are handled by Vue. PostgreSQL is accessed by the backend on `database:5432`; its port does not need to be exposed publicly.
+The order of roles matters: Docker and networking must be available before the application containers are started. This playbook deploys the Docker Hub images; it does not compile the Vue application on the server. The Vue assets are compiled during the Apache image build.
 
-### 3-8. What is the difference between CI and CD in this project?
+### 3-3. Document your `docker_container` tasks configuration
 
-CI checks the application with Maven/Testcontainers and, on a qualifying push to `main`, SonarQube Cloud. Once CI succeeds, CD builds and pushes the Docker images and uses Ansible to deploy them to the school server. A push to `feature/teacher-frontend` alone does not deploy the new frontend to the school server.
+The application roles use Ansible's Docker container management to define the desired state of each service. The important settings are:
 
-### 3-9. How are sensitive variables handled?
+- **Container name and image:** identify each service and the matching Docker Hub image (`nifdgg/tp01-database`, `nifdgg/tp01-backend`, `nifdgg/tp01-http-server`).
+- **`state: started` and restart policy:** ensure the services run and can restart as configured.
+- **Network attachment:** connect Apache, Spring Boot, and PostgreSQL so the backend can reach `database:5432` and Apache can reach `backend:8080`.
+- **Ports:** publish the Apache entry point; the backend and PostgreSQL do not need public host ports for the browser to access them.
+- **Environment variables:** configure the PostgreSQL database and the Spring Boot JDBC connection without hardcoding credentials in images.
+- **Volumes:** preserve PostgreSQL data when its container is recreated.
+- **Image pull policy:** allow the deployment to fetch the image built and published by CD.
 
-GitHub Actions secrets store automation credentials such as Docker Hub and SonarQube tokens. Local `.env` configuration must not be committed. Ansible Vault can encrypt sensitive Ansible variables, but it is not claimed as implemented in this project. Secrets must not be placed in a public README or committed inventory.
+Relevant source files are `ansible/roles/database/tasks/main.yml`, `ansible/roles/backend/tasks/main.yml`, and `ansible/roles/proxy/tasks/main.yml`. These descriptions explain the intended task configuration; exact YAML option names and values must be checked against those files when demonstrating the project.
 
-### 3-10. How do we verify the deployment?
+### Continuous Deployment — Is it really safe to deploy automatically every new image on Docker Hub? What could make it more secure?
 
-Check that the Ansible playbook finishes successfully, inspect the containers on the server, and test the public site in a browser. Confirm that the Vue homepage loads, the IRC department and student list are displayed, and API requests reach Spring Boot through `/api/`. Student creation should be demonstrated only after confirming that `POST /students` works. The new Vue version has been verified locally; its remote deployment is still pending verification.
+**No, automatically deploying every new image from a registry is not safe by itself.** An image may be untested, contain a vulnerability, or be replaced under a mutable tag such as `latest`. In this project, the CD workflow reduces this risk by deploying only after successful CI on a push to `main`, which includes Maven tests and the SonarQube Quality Gate. That is a useful safeguard, but it does not guarantee that every container image is secure.
+
+Further protections would include image vulnerability scans, immutable image tags or digests instead of relying only on `latest`, protected branches and required reviews, restricted Docker Hub and SSH credentials, and optionally a manual approval step before production deployment. These are proposed improvements, not features claimed as implemented. Ansible Vault is an optional extension and has not been implemented here.
 
 ## 11. How to demonstrate TP01, TP02 and TP03
 
@@ -633,19 +655,19 @@ docker compose up -d --build
 docker compose ps
 ```
 
-Open `http://localhost:8081/`, select a department such as IRC, and display its students. Show that the frontend uses `/api/departments` and `/api/departments/IRC/students`, Apache proxies these requests to Spring Boot, and PostgreSQL stores the data. Demonstrate the Add button only after validating student creation.
+Open `http://localhost:8081/`, select a department such as IRC, and display its students. Show that the frontend uses `/api/departments` and `/api/departments/IRC/students`, Apache proxies these requests to Spring Boot, and PostgreSQL stores the data. Demonstrate the **Add** button: student creation has been verified locally.
 
 **TP02 — Automation:**
 
-Open the GitHub Actions page and show successful CI and CD runs for the previously deployed version, including Maven/Testcontainers and SonarQube in CI and Docker build-and-push steps in CD. The new frontend build must be validated on `main` before claiming that this version was deployed.
+Open the GitHub Actions page and show the `main` branch CI/CD workflow runs, including Maven/Testcontainers and SonarQube in CI, Docker builds/pushes in CD, and the Ansible deployment step. Verify the exact run status in GitHub Actions when presenting.
 
 **TP03 — Deployment and frontend integration:**
 
-Show `ansible/playbook.yml` and the Ansible roles, then show `http-server/Dockerfile`, `http-server/proxy.conf`, and the modified Vue `fetch` calls. Demonstrate the locally running Vue frontend. Show the remote site only after the new Docker images have been built, pushed, and deployed successfully.
+Show `ansible/playbook.yml` and the Ansible roles, then show `http-server/Dockerfile`, `http-server/proxy.conf`, and the modified Vue `fetch` calls. Demonstrate the locally running Vue frontend, then open `http://zihao.cheng.takima.school/` to show the updated site on the school server.
 
 ## 12. Conclusion
 
-TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery. TP03 adds Ansible-based deployment. The teacher-provided Vue frontend is integrated and works locally; remote deployment of this updated frontend remains to be verified.
+TP01 demonstrates Docker image creation, PostgreSQL initialization, database persistence, multistage Java builds, backend database connectivity, Apache reverse proxying, Docker Compose orchestration, and Docker Hub publication. TP02 extends the application with automated Maven/Testcontainers tests, SonarQube quality checks, and GitHub Actions-based Docker image delivery. TP03 adds Ansible-based deployment. The teacher-provided Vue frontend works locally, including student creation, and the updated website has been deployed to the school server.
 
 The application can be built and started with:
 
